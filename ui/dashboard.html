@@ -1,0 +1,238 @@
+<!-- ── Dashboard View ───────────────────────────────────────────────────── -->
+<div id="view-dashboard" class="view">
+
+<script>
+let dashRefreshTimer = null;
+
+async function initDashboard() {
+  if (!App.setupComplete) { Router.navigate('#onboarding'); return; }
+  renderDashboardShell();
+  await loadDashboard();
+}
+
+function renderDashboardShell() {
+  setHTML('#view-dashboard', `
+    <!-- Stats row -->
+    <div class="stats-grid mb-6" id="stats-grid">
+      ${[0,1,2,3].map(() => '<div class="stat-card"><div class="stat-label"><div class="skeleton" style="width:80px;height:12px;background:var(--border);border-radius:4px"></div></div><div class="stat-value" style="color:var(--border)">—</div></div>').join('')}
+    </div>
+
+    <!-- 2-column layout -->
+    <div style="display:grid;grid-template-columns:1fr 360px;gap:var(--space-5);align-items:start">
+      <!-- Recent newsletters -->
+      <div>
+        <div class="section-heading">
+          <h2 class="section-title">Recent newsletters</h2>
+          <button class="section-action" onclick="Router.navigate('#archive')">View all →</button>
+        </div>
+        <div id="recent-news-list">
+          <div class="loading-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- Sidebar panels -->
+      <div style="display:flex;flex-direction:column;gap:var(--space-4)">
+        <!-- Backfill status -->
+        <div class="card" id="backfill-card">
+          <div class="card-header">
+            <span class="card-title">Import status</span>
+            <span id="backfill-badge"></span>
+          </div>
+          <div class="card-body" id="backfill-body">
+            <div class="loading-state" style="padding:16px 0"><div class="spinner spinner-sm"></div></div>
+          </div>
+        </div>
+
+        <!-- Providers -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">AI Providers</span>
+            <button class="btn btn-ghost btn-sm" onclick="Router.navigate('#settings')">Configure</button>
+          </div>
+          <div class="card-body" id="provider-status-body">
+            <div class="loading-state" style="padding:16px 0"><div class="spinner spinner-sm"></div></div>
+          </div>
+        </div>
+
+        <!-- Scan status -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Auto-scan</span>
+            <span id="scan-badge"></span>
+          </div>
+          <div class="card-body" id="scan-status-body">
+            <div class="loading-state" style="padding:16px 0"><div class="spinner spinner-sm"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+async function loadDashboard() {
+  try {
+    const data = await API.getDashboardData();
+    App.dashboardData = data;
+    renderStats(data.stats);
+    renderRecentNews(data.recentNews || []);
+    renderBackfillCard(data.backfillState);
+    renderProviderStatus(data.providerStatus);
+    renderScanStatus(data.triggers, data.lastScanTime);
+
+    // Poll backfill if running
+    if (data.backfillState && data.backfillState.status === 'running') {
+      BackfillPoller.start((state) => renderBackfillCard(state));
+    }
+  } catch (err) {
+    Toast.error('Could not load dashboard: ' + err.message);
+  }
+}
+
+function renderStats(stats) {
+  if (!stats) return;
+  const items = [
+    { label: 'Total newsletters', value: fmtNum(stats.total),         meta: `${fmtNum(stats.uniqueSources)} sources` },
+    { label: 'Today',             value: fmtNum(stats.todayCount),     meta: 'new arrivals' },
+    { label: 'Historical import', value: fmtNum(stats.backfillCount),  meta: 'via backfill' },
+    { label: 'Failed imports',    value: fmtNum(stats.failedCount),    meta: stats.failedCount > 0 ? '⚠ check settings' : 'all good' },
+  ];
+  setHTML('#stats-grid', items.map((s) => `
+    <div class="stat-card">
+      <div class="stat-label">${s.label}</div>
+      <div class="stat-value">${s.value}</div>
+      <div class="stat-meta">${s.meta}</div>
+    </div>`).join(''));
+}
+
+function renderRecentNews(items) {
+  if (!items || items.length === 0) {
+    showEmpty('#recent-news-list', 'No newsletters yet', 'Run a scan or start the backfill import.', '📭');
+    return;
+  }
+  setHTML('#recent-news-list', `
+    <div class="newsletter-list">
+      ${items.map((n) => `
+        <div class="newsletter-item" onclick="openNewsletter('${escAttr(n.messageId)}','${escAttr(n.driveFileUrl)}')">
+          <div class="newsletter-avatar">${esc(senderInitial(n.sender))}</div>
+          <div class="newsletter-info">
+            <div class="newsletter-source">${esc(n.sourceName || n.senderEmail)}</div>
+            <div class="newsletter-subject">${esc(n.subject)}</div>
+            <div class="newsletter-meta">
+              <span>${fmtDate(n.date)}</span>
+              ${n.topics && n.topics.length ? `<span>· ${esc(n.topics.slice(0,2).join(', '))}</span>` : ''}
+              ${statusBadge(n.processingStatus)}
+            </div>
+          </div>
+          ${n.driveFileUrl ? '<span style="color:var(--text-tertiary);font-size:18px;flex-shrink:0">↗</span>' : ''}
+        </div>`).join('')}
+    </div>
+  `);
+}
+
+function renderBackfillCard(state) {
+  const badge = document.getElementById('backfill-badge');
+  const body  = document.getElementById('backfill-body');
+  if (!badge || !body) return;
+
+  if (!state) {
+    badge.innerHTML = statusBadge('idle');
+    body.innerHTML  = `
+      <p class="text-sm text-muted mb-4">No historical import configured.</p>
+      <button class="btn btn-secondary btn-sm" onclick="Router.navigate('#settings')">Configure import</button>`;
+    return;
+  }
+
+  badge.innerHTML = statusBadge(state.status);
+  const pct = fmtPct(state.processed + state.skipped, state.totalEstimate);
+
+  body.innerHTML = `
+    <div style="margin-bottom:12px">
+      <div class="progress-wrap mb-2">
+        <div class="progress-bar ${state.status === 'complete' ? 'success' : ''}" style="width:${pct}%"></div>
+      </div>
+      <div class="flex justify-between text-xs text-muted">
+        <span>${pct}%</span>
+        <span>${fmtNum(state.processed + state.skipped)} / ~${fmtNum(state.totalEstimate)}</span>
+      </div>
+    </div>
+    <div class="status-row"><span class="status-label text-sm">Processed</span><span class="status-value">${fmtNum(state.processed)}</span></div>
+    <div class="status-row"><span class="status-label text-sm">Skipped</span><span class="status-value">${fmtNum(state.skipped)}</span></div>
+    <div class="status-row"><span class="status-label text-sm">Failed</span><span class="status-value">${fmtNum(state.failed)}</span></div>
+    ${state.lastBatchAt ? `<div class="status-row"><span class="status-label text-sm">Last batch</span><span class="status-value">${fmtDate(state.lastBatchAt)}</span></div>` : ''}
+    <div style="margin-top:12px;display:flex;gap:8px">
+      ${state.status === 'running'  ? '<button class="btn btn-secondary btn-sm" onclick="pauseBackfill()">Pause</button>' : ''}
+      ${state.status === 'paused'   ? '<button class="btn btn-primary btn-sm" onclick="resumeBackfill()">Resume</button>' : ''}
+      ${state.status === 'error'    ? `<div class="alert alert-error" style="margin:0;font-size:12px">${esc(state.errorMessage || 'Unknown error')}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderProviderStatus(statuses) {
+  if (!statuses) return;
+  const providers = [
+    { id: 'claude', label: 'Claude (Anthropic)' },
+    { id: 'openai', label: 'OpenAI' },
+    { id: 'gemini', label: 'Gemini' },
+  ];
+  setHTML('#provider-status-body', providers.map((p) => {
+    const info = statuses[p.id] || { status: 'missing' };
+    return `
+      <div class="status-row">
+        <div class="status-dot ${info.status === 'configured' ? 'online' : 'warning'}"></div>
+        <span class="status-label text-sm">${p.label}</span>
+        <span class="status-value">${statusBadge(info.status)}</span>
+      </div>`;
+  }).join(''));
+}
+
+function renderScanStatus(triggers, lastScanTime) {
+  const scanActive = triggers && triggers.scan && triggers.scan.active;
+  setHTML('#scan-badge', statusBadge(scanActive ? 'running' : 'idle'));
+  setHTML('#scan-status-body', `
+    <div class="status-row">
+      <div class="status-dot ${scanActive ? 'online' : 'idle'}"></div>
+      <span class="status-label text-sm">Auto-scan (30 min)</span>
+      <span class="status-value">${scanActive ? 'Active' : 'Off'}</span>
+    </div>
+    ${lastScanTime ? `<div class="status-row"><span class="status-label text-sm">Last scan</span><span class="status-value">${fmtDate(lastScanTime)}</span></div>` : ''}
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn btn-secondary btn-sm" onclick="runScanNow()">Scan now</button>
+      ${!scanActive ? '<button class="btn btn-primary btn-sm" onclick="enableScan()">Enable</button>' : ''}
+    </div>
+  `);
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+
+async function pauseBackfill() {
+  try { await API.pauseBackfill(); Toast.info('Backfill paused'); renderBackfillCard({ ...App.dashboardData.backfillState, status: 'paused' }); }
+  catch (err) { Toast.error(err.message); }
+}
+
+async function resumeBackfill() {
+  try { await API.resumeBackfill(); Toast.success('Backfill resumed'); BackfillPoller.start((s) => renderBackfillCard(s)); }
+  catch (err) { Toast.error(err.message); }
+}
+
+async function runScanNow() {
+  Toast.info('Scanning for new newsletters…');
+  try {
+    const res = await API.runScanNow();
+    Toast.success(`Scan complete: ${res.processed} new, ${res.skipped} skipped`);
+    await loadDashboard();
+  } catch (err) { Toast.error('Scan failed: ' + err.message); }
+}
+
+async function enableScan() {
+  try { await API.setupScanTrigger(); Toast.success('Auto-scan enabled'); await loadDashboard(); }
+  catch (err) { Toast.error(err.message); }
+}
+
+function openNewsletter(messageId, driveUrl) {
+  if (driveUrl) window.open(driveUrl, '_blank');
+}
+
+function esc(s) { const d = document.createElement('div'); d.appendChild(document.createTextNode(s||'')); return d.innerHTML; }
+function escAttr(s) { return (s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+</script>
+</div>

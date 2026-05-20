@@ -1,0 +1,480 @@
+<!-- ── Settings View ────────────────────────────────────────────────────── -->
+<div id="view-settings" class="view">
+
+<style>
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+.settings-tabs {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  position: sticky;
+  top: calc(var(--header-height) + 24px);
+}
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 11px var(--space-4);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.settings-tab:last-child { border-bottom: none; }
+.settings-tab:hover { background: var(--surface-2); color: var(--text-primary); }
+.settings-tab.active { background: var(--accent-light); color: var(--accent); }
+.settings-panel { display: none; }
+.settings-panel.active { display: block; }
+.provider-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: var(--space-4);
+}
+.provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+.provider-body { padding: var(--space-4) var(--space-5); }
+.danger-zone {
+  border: 1px solid var(--error-light);
+  border-radius: var(--r-lg);
+  padding: var(--space-5);
+  background: var(--error-light);
+}
+@media (max-width: 768px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-tabs {
+    display: flex; flex-direction: row; overflow-x: auto;
+    position: static; border-radius: var(--r-lg);
+  }
+  .settings-tab { border-bottom: none; border-right: 1px solid var(--border); white-space: nowrap; }
+  .settings-tab:last-child { border-right: none; }
+}
+</style>
+
+<div class="settings-layout">
+  <!-- Tab nav -->
+  <div class="settings-tabs">
+    <button class="settings-tab active" onclick="switchSettingsTab('providers')" data-tab="providers">
+      🤖 AI Providers
+    </button>
+    <button class="settings-tab" onclick="switchSettingsTab('scan')" data-tab="scan">
+      📡 Scan & Import
+    </button>
+    <button class="settings-tab" onclick="switchSettingsTab('labels')" data-tab="labels">
+      🏷 Labels
+    </button>
+    <button class="settings-tab" onclick="switchSettingsTab('topics')" data-tab="topics">
+      💡 Topics
+    </button>
+    <button class="settings-tab" onclick="switchSettingsTab('danger')" data-tab="danger">
+      ⚠ Danger zone
+    </button>
+  </div>
+
+  <!-- Panels -->
+  <div id="settings-content">
+    <!-- Providers panel -->
+    <div class="settings-panel active" id="panel-providers">
+      <div class="section-heading"><h2 class="section-title">AI Providers</h2></div>
+      <p class="text-sm text-muted mb-5">Configure API keys for AI summaries and analysis. Keys are stored server-side and never exposed to the browser.</p>
+      <div id="providers-list">
+        <div class="loading-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- Scan panel -->
+    <div class="settings-panel" id="panel-scan">
+      <div class="section-heading"><h2 class="section-title">Scan & Import</h2></div>
+      <div id="scan-panel-content">
+        <div class="loading-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- Labels panel -->
+    <div class="settings-panel" id="panel-labels">
+      <div class="section-heading"><h2 class="section-title">Gmail Labels</h2></div>
+      <p class="text-sm text-muted mb-4">Select which labels Newsy should scan for newsletters.</p>
+      <div id="labels-panel-content">
+        <div class="loading-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- Topics panel -->
+    <div class="settings-panel" id="panel-topics">
+      <div class="section-heading"><h2 class="section-title">Topic Preferences</h2></div>
+      <p class="text-sm text-muted mb-4">Topics used for filtering and trend analysis.</p>
+      <div id="topics-panel-content">
+        <div class="loading-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="settings-panel" id="panel-danger">
+      <div class="section-heading"><h2 class="section-title">Danger Zone</h2></div>
+      <div class="danger-zone">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--error)">Reset all settings</div>
+        <p class="text-sm" style="margin-bottom:16px">This will clear setup data, API keys, triggers, and checkpoints. <strong>Your Drive archive and spreadsheet index are not deleted.</strong></p>
+        <button class="btn btn-danger btn-sm" onclick="confirmReset()">Reset Newsy setup</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const Settings = {
+  prefs:       null,
+  statuses:    null,
+  activeTab:   'providers',
+};
+
+function switchSettingsTab(tab) {
+  Settings.activeTab = tab;
+  $$('.settings-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  $$('.settings-panel').forEach((p) => p.classList.toggle('active', p.id === `panel-${tab}`));
+  loadSettingsTab(tab);
+}
+
+async function initSettings() {
+  if (!App.setupComplete) return;
+  await loadSettingsTab(Settings.activeTab);
+}
+
+async function loadSettingsTab(tab) {
+  switch (tab) {
+    case 'providers': await loadProviders(); break;
+    case 'scan':      await loadScanPanel(); break;
+    case 'labels':    await loadLabelsPanel(); break;
+    case 'topics':    await loadTopicsPanel(); break;
+  }
+}
+
+// ── Providers ────────────────────────────────────────────────────────────────
+
+async function loadProviders() {
+  try {
+    Settings.statuses = await API.getProviderStatuses();
+    const providers = [
+      { id: 'claude', label: 'Claude (Anthropic)', placeholder: 'sk-ant-api03-…', note: 'Use claude-sonnet-4-6 for best results' },
+      { id: 'openai', label: 'OpenAI',             placeholder: 'sk-proj-…',      note: 'gpt-4o-mini for cost efficiency, gpt-4o for quality' },
+      { id: 'gemini', label: 'Gemini (Google)',     placeholder: 'AIzaSy…',        note: 'gemini-1.5-flash is fast and affordable' },
+    ];
+    setHTML('#providers-list', providers.map((p) => renderProviderCard(p)).join(''));
+  } catch (err) {
+    setHTML('#providers-list', `<div class="alert alert-error">${err.message}</div>`);
+  }
+}
+
+function renderProviderCard(p) {
+  const info    = (Settings.statuses || {})[p.id] || { status: 'missing' };
+  const isConf  = info.status === 'configured';
+  return `
+    <div class="provider-row" id="provider-${p.id}">
+      <div class="provider-header">
+        <div class="flex items-center gap-3">
+          <div class="status-dot ${isConf ? 'online' : 'warning'}"></div>
+          <span class="font-semibold">${p.label}</span>
+        </div>
+        <div class="flex gap-2 items-center">
+          ${statusBadge(info.status)}
+          ${isConf ? `<button class="btn btn-ghost btn-sm" onclick="testProvider('${p.id}')">Test</button>
+                      <button class="btn btn-ghost btn-sm" onclick="removeKey('${p.id}')">Remove</button>` : ''}
+        </div>
+      </div>
+      <div class="provider-body">
+        ${isConf && info.masked ? `<p class="text-sm text-muted mb-3">Current key: <code style="font-size:13px">${esc(info.masked)}</code></p>` : ''}
+        <div class="flex gap-2" style="align-items:flex-end">
+          <div style="flex:1">
+            <label class="form-label">${isConf ? 'Replace key' : 'Enter API key'}</label>
+            <div class="input-password-wrap">
+              <input class="form-control" id="key-input-${p.id}" type="password"
+                     placeholder="${p.placeholder}" autocomplete="new-password">
+              <button class="input-password-toggle" type="button"
+                      onclick="toggleKeyVisibility('${p.id}')">👁</button>
+            </div>
+            <p class="form-hint">${p.note}</p>
+          </div>
+          <button class="btn btn-primary" onclick="saveKey('${p.id}')">Save key</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveKey(provider) {
+  const input = $(`#key-input-${provider}`);
+  const key   = (input || {}).value || '';
+  if (!key.trim()) { Toast.error('Please enter an API key'); return; }
+  try {
+    await API.saveApiKey(provider, key.trim());
+    Toast.success('API key saved');
+    if (input) input.value = '';
+    await loadProviders();
+  } catch (err) { Toast.error('Failed to save key: ' + err.message); }
+}
+
+async function removeKey(provider) {
+  if (!confirm('Remove this API key?')) return;
+  try {
+    await API.removeApiKey(provider);
+    Toast.info('Key removed');
+    await loadProviders();
+  } catch (err) { Toast.error(err.message); }
+}
+
+async function testProvider(provider) {
+  Toast.info(`Testing ${provider}…`);
+  try {
+    const res = await API.testProviderConnection(provider);
+    if (res.ok) Toast.success(`${provider} connection OK!`);
+    else Toast.error(`${provider}: ${res.error}`);
+  } catch (err) { Toast.error(err.message); }
+}
+
+function toggleKeyVisibility(provider) {
+  const input = $(`#key-input-${provider}`);
+  if (input) input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// ── Scan panel ────────────────────────────────────────────────────────────────
+
+async function loadScanPanel() {
+  try {
+    const [triggers, lastScan, backfillState] = await Promise.all([
+      API.call('getInitialState').then(() => API.call('getDashboardData')).catch(() => ({})),
+      API.getBackfillState(),
+    ]).catch(() => [{}, null]);
+
+    const dashData = await API.getDashboardData();
+    const scanActive = dashData.triggers && dashData.triggers.scan && dashData.triggers.scan.active;
+
+    setHTML('#scan-panel-content', `
+      <!-- Auto-scan -->
+      <div class="card mb-5">
+        <div class="card-header">
+          <span class="card-title">Auto-scan</span>
+          ${statusBadge(scanActive ? 'running' : 'idle')}
+        </div>
+        <div class="card-body">
+          <p class="text-sm text-muted mb-4">Newsy scans Gmail every 30 minutes for new newsletters.</p>
+          <div class="status-row">
+            <span class="status-label">Status</span>
+            <span class="status-value">${scanActive ? 'Active' : 'Inactive'}</span>
+          </div>
+          ${dashData.lastScanTime ? `<div class="status-row"><span class="status-label">Last scan</span><span class="status-value">${fmtDate(dashData.lastScanTime)}</span></div>` : ''}
+          <div class="flex gap-3 mt-4">
+            <button class="btn btn-secondary btn-sm" onclick="runScanNow()">Scan now</button>
+            ${scanActive
+              ? '<button class="btn btn-ghost btn-sm" onclick="disableScan()">Disable auto-scan</button>'
+              : '<button class="btn btn-primary btn-sm" onclick="enableScan()">Enable auto-scan</button>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Backfill -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Historical backfill</span>
+          ${backfillState ? statusBadge(backfillState.status) : statusBadge('idle')}
+        </div>
+        <div class="card-body" id="settings-backfill-body">
+          ${renderBackfillPanel(backfillState)}
+        </div>
+      </div>
+    `);
+  } catch (err) {
+    setHTML('#scan-panel-content', `<div class="alert alert-error">${err.message}</div>`);
+  }
+}
+
+function renderBackfillPanel(state) {
+  if (!state) {
+    return `
+      <p class="text-sm text-muted mb-4">Import historical newsletters from Gmail into your archive.</p>
+      <div class="grid-2 mb-4">
+        <div class="form-group">
+          <label class="form-label">Start date</label>
+          <input class="form-control" type="date" id="bf2-start">
+        </div>
+        <div class="form-group">
+          <label class="form-label">End date</label>
+          <input class="form-control" type="date" id="bf2-end">
+        </div>
+      </div>
+      <div class="form-group mb-4">
+        <label class="form-label">Import mode</label>
+        <select class="form-control" id="bf2-mode">
+          <option value="all">All matching messages</option>
+          <option value="newsletters_only">Newsletter signals only</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="startBackfillFromSettings()">Start import</button>`;
+  }
+
+  const pct = fmtPct(state.processed + state.skipped, state.totalEstimate);
+  return `
+    <div class="progress-wrap mb-3">
+      <div class="progress-bar ${state.status==='complete'?'success':''}" style="width:${pct}%"></div>
+    </div>
+    <div class="text-sm text-muted mb-3">${pct}% · ${fmtNum(state.processed+state.skipped)} of ~${fmtNum(state.totalEstimate)}</div>
+    <div class="status-row"><span class="status-label text-sm">Processed</span><span>${fmtNum(state.processed)}</span></div>
+    <div class="status-row"><span class="status-label text-sm">Skipped (duplicates)</span><span>${fmtNum(state.skipped)}</span></div>
+    <div class="status-row"><span class="status-label text-sm">Failed</span><span>${fmtNum(state.failed)}</span></div>
+    ${state.lastBatchAt ? `<div class="status-row"><span class="status-label text-sm">Last batch</span><span>${fmtDate(state.lastBatchAt)}</span></div>` : ''}
+    <div class="flex gap-3 mt-4">
+      ${state.status==='running' ? '<button class="btn btn-secondary btn-sm" onclick="pauseBackfill()">Pause</button>' : ''}
+      ${state.status==='paused'  ? '<button class="btn btn-primary btn-sm"    onclick="resumeBackfill()">Resume</button>' : ''}
+    </div>`;
+}
+
+async function startBackfillFromSettings() {
+  const cfg = {
+    startDate: ($('#bf2-start')||{}).value || '',
+    endDate:   ($('#bf2-end')  ||{}).value || '',
+    mode:      ($('#bf2-mode') ||{}).value || 'all',
+    enabled:   true,
+  };
+  try {
+    await API.startBackfill(cfg);
+    Toast.success('Backfill started!');
+    BackfillPoller.start(() => loadScanPanel());
+    await loadScanPanel();
+  } catch (err) { Toast.error(err.message); }
+}
+
+async function enableScan() {
+  try { await API.setupScanTrigger(); Toast.success('Auto-scan enabled'); await loadScanPanel(); }
+  catch (err) { Toast.error(err.message); }
+}
+
+async function disableScan() {
+  if (!confirm('Disable auto-scan? New newsletters won\'t be imported automatically.')) return;
+  try { await API.removeScanTrigger(); Toast.info('Auto-scan disabled'); await loadScanPanel(); }
+  catch (err) { Toast.error(err.message); }
+}
+
+async function runScanNow() {
+  Toast.info('Scanning…');
+  try {
+    const res = await API.runScanNow();
+    Toast.success(`Done: ${res.processed} new, ${res.skipped} skipped`);
+  } catch (err) { Toast.error(err.message); }
+}
+
+// ── Labels panel ──────────────────────────────────────────────────────────────
+
+async function loadLabelsPanel() {
+  try {
+    const [prefs, gmailLabels] = await Promise.all([API.getUserPrefs(), API.getGmailLabels()]);
+    Settings.prefs = prefs;
+    const selected = prefs.newsletterLabels || [];
+    setHTML('#labels-panel-content', `
+      <div class="label-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:400px;overflow-y:auto;padding-right:4px;margin-bottom:16px">
+        ${(gmailLabels||[]).map((l) => `
+          <label class="label-chip${selected.includes(l.name)?' selected':''}">
+            <input type="checkbox" class="label-checkbox" value="${esc(l.name)}" ${selected.includes(l.name)?'checked':''}
+              onchange="this.closest('.label-chip').classList.toggle('selected',this.checked)">
+            <span>🏷 ${esc(l.name)}</span>
+          </label>`).join('')}
+        ${!gmailLabels || !gmailLabels.length ? '<p class="text-muted text-sm">No Gmail labels found.</p>' : ''}
+      </div>
+      <button class="btn btn-primary" onclick="saveLabels()">Save labels</button>
+    `);
+  } catch (err) {
+    setHTML('#labels-panel-content', `<div class="alert alert-error">${err.message}</div>`);
+  }
+}
+
+async function saveLabels() {
+  const selected = Array.from($$('.label-checkbox:checked')).map((i) => i.value);
+  try {
+    await API.saveUserPrefs({ ...(Settings.prefs||{}), newsletterLabels: selected });
+    Toast.success('Labels saved');
+  } catch (err) { Toast.error(err.message); }
+}
+
+// ── Topics panel ──────────────────────────────────────────────────────────────
+
+async function loadTopicsPanel() {
+  try {
+    Settings.prefs = await API.getUserPrefs();
+    const selected = Settings.prefs.topics || [];
+    const allTopics = [...new Set([...selected, ...window.__CONFIG_TOPICS__ || [
+      'AI agents','OpenAI','Claude','Gemini','robotics','local LLMs','coding agents',
+      'AI workplace','automation','startups','machine learning','GPT','multimodal',
+      'RAG','fine-tuning','AI safety','open source AI','AI regulation',
+    ]])];
+
+    setHTML('#topics-panel-content', `
+      <div class="topic-grid mb-4" id="topics-chips">
+        ${allTopics.map((t) => `
+          <button type="button" class="topic-chip${selected.includes(t)?' selected':''}"
+            onclick="this.classList.toggle('selected')">${esc(t)}</button>`).join('')}
+      </div>
+      <div class="flex gap-3 items-end mb-5">
+        <div class="form-group" style="flex:1;margin:0">
+          <label class="form-label">Add custom topic</label>
+          <input class="form-control" id="custom-topic-input" type="text" placeholder="e.g. AI hardware"
+                 onkeydown="if(event.key==='Enter')addCustomTopic()">
+        </div>
+        <button class="btn btn-secondary" onclick="addCustomTopic()">Add</button>
+      </div>
+      <button class="btn btn-primary" onclick="saveTopics()">Save topics</button>
+    `);
+  } catch (err) {
+    setHTML('#topics-panel-content', `<div class="alert alert-error">${err.message}</div>`);
+  }
+}
+
+function addCustomTopic() {
+  const input = $('#custom-topic-input');
+  const val   = (input || {}).value || '';
+  if (!val.trim()) return;
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'topic-chip selected';
+  chip.textContent = val.trim();
+  chip.onclick = () => chip.classList.toggle('selected');
+  $('#topics-chips').appendChild(chip);
+  if (input) input.value = '';
+}
+
+async function saveTopics() {
+  const selected = $$('.topic-chip.selected').map((b) => b.textContent.trim());
+  try {
+    await API.saveUserPrefs({ ...(Settings.prefs||{}), topics: selected });
+    Toast.success('Topics saved');
+  } catch (err) { Toast.error(err.message); }
+}
+
+// ── Danger zone ───────────────────────────────────────────────────────────────
+
+async function confirmReset() {
+  if (!confirm('Reset all Newsy settings? This cannot be undone.')) return;
+  if (!confirm('Are you sure? API keys, triggers, and setup will be cleared.')) return;
+  try {
+    await API.resetSetup();
+    Toast.info('Settings reset. Reloading…');
+    setTimeout(() => location.reload(), 1500);
+  } catch (err) { Toast.error(err.message); }
+}
+
+function esc(s) { const d = document.createElement('div'); d.appendChild(document.createTextNode(s||'')); return d.innerHTML; }
+</script>
+</div>

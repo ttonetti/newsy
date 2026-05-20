@@ -1,0 +1,442 @@
+<!-- ── Onboarding / Setup Wizard ────────────────────────────────────────── -->
+<div id="view-onboarding" class="view">
+<style>
+.wizard-shell {
+  min-height: calc(100vh - var(--header-height));
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--space-10) var(--space-6);
+}
+.wizard-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 640px;
+  overflow: hidden;
+}
+.wizard-progress-rail {
+  height: 3px;
+  background: var(--bg);
+}
+.wizard-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--t-slow);
+}
+.wizard-step-header {
+  padding: var(--space-8) var(--space-8) var(--space-5);
+}
+.wizard-step-number {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: var(--space-2);
+}
+.wizard-step-title {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -.4px;
+  margin-bottom: var(--space-2);
+}
+.wizard-step-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.wizard-body {
+  padding: 0 var(--space-8) var(--space-6);
+  min-height: 200px;
+}
+.wizard-footer {
+  padding: var(--space-5) var(--space-8);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-2);
+}
+.wizard-step-counter { font-size: 13px; color: var(--text-tertiary); }
+.wizard-nav { display: flex; gap: var(--space-3); }
+
+/* Label selector */
+.label-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.label-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: border-color var(--t-fast), background var(--t-fast);
+  background: var(--surface);
+}
+.label-chip:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.label-chip.selected { border-color: var(--accent); background: var(--accent-light); color: var(--accent); }
+.label-chip input { display: none; }
+
+/* Topic tags */
+.topic-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.topic-chip {
+  padding: 6px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--surface);
+  transition: all var(--t-fast);
+  user-select: none;
+}
+.topic-chip:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.topic-chip.selected { border-color: var(--accent); background: var(--accent-light); color: var(--accent); }
+</style>
+
+<div class="wizard-shell">
+  <div class="wizard-card">
+    <div class="wizard-progress-rail">
+      <div class="wizard-progress-fill" id="wiz-progress" style="width:14%"></div>
+    </div>
+
+    <div id="wiz-content">
+      <!-- Steps rendered by JS -->
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Wizard State ────────────────────────────────────────────────────────────
+const WIZ = {
+  step:     0,
+  data:     {},
+  labels:   [],
+  TOTAL:    7,
+};
+
+const WIZ_STEPS = [
+  { id: 'welcome',      title: 'Welcome to Newsy',           desc: 'Your personal AI newsletter intelligence hub. This wizard takes about 3 minutes.' },
+  { id: 'labels',       title: 'Gmail Labels',               desc: 'Which Gmail labels contain your newsletters? We\'ll scan these for import.' },
+  { id: 'topics',       title: 'Topics you care about',      desc: 'Select the AI and tech topics most relevant to you. You can change these later.' },
+  { id: 'drive',        title: 'Archive location',           desc: 'Where should newsletters be saved in Google Drive?' },
+  { id: 'apikeys',      title: 'AI Provider API Keys',       desc: 'Connect at least one AI provider for summaries and analysis. Keys are stored securely on the server — never in the browser.' },
+  { id: 'backfill',     title: 'Import history',             desc: 'Do you want to import your existing newsletters? This runs safely in the background.' },
+  { id: 'complete',     title: 'All set!',                   desc: 'Newsy is ready. Your newsletters will be automatically imported and organized.' },
+];
+
+function initOnboarding() {
+  if (App.setupComplete) { Router.navigate('#dashboard'); return; }
+  WIZ.step = 0;
+  renderWizStep();
+}
+
+function renderWizStep() {
+  const s    = WIZ_STEPS[WIZ.step];
+  const pct  = Math.round(((WIZ.step + 1) / WIZ.TOTAL) * 100);
+  $('#wiz-progress').style.width = pct + '%';
+
+  $('#wiz-content').innerHTML = `
+    <div class="wizard-step-header">
+      <div class="wizard-step-number">Step ${WIZ.step + 1} of ${WIZ.TOTAL}</div>
+      <h2 class="wizard-step-title">${s.title}</h2>
+      <p class="wizard-step-desc">${s.desc}</p>
+    </div>
+    <div class="wizard-body" id="wiz-body"></div>
+    <div class="wizard-footer">
+      <span class="wizard-step-counter">${pct}% complete</span>
+      <div class="wizard-nav">
+        ${WIZ.step > 0 ? '<button class="btn btn-secondary btn-sm" onclick="wizBack()">Back</button>' : ''}
+        <button class="btn btn-primary btn-sm" id="wiz-next-btn" onclick="wizNext()">
+          ${WIZ.step === WIZ.TOTAL - 1 ? 'Finish' : 'Continue'}
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Render step body
+  const bodyFns = { welcome: wizBodyWelcome, labels: wizBodyLabels, topics: wizBodyTopics,
+                    drive: wizBodyDrive, apikeys: wizBodyApiKeys, backfill: wizBodyBackfill,
+                    complete: wizBodyComplete };
+  const bodyFn = bodyFns[s.id];
+  if (bodyFn) bodyFn();
+}
+
+function wizBack() {
+  if (WIZ.step > 0) { WIZ.step--; renderWizStep(); }
+}
+
+async function wizNext() {
+  const stepId = WIZ_STEPS[WIZ.step].id;
+  const collectFns = {
+    labels:   wizCollectLabels,
+    topics:   wizCollectTopics,
+    drive:    wizCollectDrive,
+    apikeys:  wizCollectApiKeys,
+    backfill: wizCollectBackfill,
+  };
+  if (collectFns[stepId]) {
+    const ok = await collectFns[stepId]();
+    if (!ok) return;
+  }
+
+  if (WIZ.step === WIZ.TOTAL - 1) {
+    await wizFinish();
+    return;
+  }
+  WIZ.step++;
+  renderWizStep();
+}
+
+// ── Step Bodies ─────────────────────────────────────────────────────────────
+
+function wizBodyWelcome() {
+  setHTML('#wiz-body', `
+    <div style="display:flex;flex-direction:column;gap:16px;padding-top:8px">
+      ${['🔎 Import & archive 15,000+ newsletters safely',
+         '📊 Search, filter, and trend-track your reading',
+         '🤖 AI summaries with Claude, OpenAI, or Gemini',
+         '📰 Daily AI newspaper from your newsletters',
+         '🔒 API keys stay secure on Google\'s servers'].map((f) =>
+           `<div class="flex items-center gap-3"><span style="font-size:20px">${f.slice(0,2)}</span><span style="font-size:14px">${f.slice(3)}</span></div>`
+         ).join('')}
+    </div>
+  `);
+}
+
+function wizBodyLabels() {
+  setHTML('#wiz-body', '<div class="loading-state"><div class="spinner"></div></div>');
+  API.getGmailLabels().then((labels) => {
+    WIZ.labels = labels || [];
+    const selected = WIZ.data.labels || [];
+    setHTML('#wiz-body', `
+      <p class="text-sm text-muted mb-4">Select labels that contain newsletters:</p>
+      <div class="label-grid" id="label-grid">
+        ${WIZ.labels.map((l) => `
+          <label class="label-chip${selected.includes(l.name) ? ' selected' : ''}">
+            <input type="checkbox" value="${esc(l.name)}" ${selected.includes(l.name) ? 'checked' : ''}
+              onchange="toggleLabelChip(this)">
+            <span>🏷 ${esc(l.name)}</span>
+          </label>`).join('')}
+        ${WIZ.labels.length === 0 ? '<p class="text-muted text-sm">No labels found. You can add them in Settings later.</p>' : ''}
+      </div>
+      <p class="form-hint mt-4">Can't find the right label? You can skip for now and configure in Settings.</p>
+    `);
+  }).catch(() => setHTML('#wiz-body', '<p class="text-muted text-sm">Could not load labels. Check Gmail permissions.</p>'));
+}
+
+function toggleLabelChip(input) {
+  input.closest('.label-chip').classList.toggle('selected', input.checked);
+}
+
+function wizCollectLabels() {
+  const selected = Array.from($$('input[type=checkbox]:checked', $('#wiz-body'))).map((i) => i.value);
+  WIZ.data.labels = selected;
+  return API.saveSetupStep('labels', { newsletterLabels: selected }).then(() => true).catch(() => true);
+}
+
+function wizBodyTopics() {
+  const allTopics = window.__CONFIG_TOPICS__ || [
+    'AI agents','OpenAI','Claude','Gemini','robotics','local LLMs','coding agents',
+    'product design','AI workplace','automation','startups','transmedia','machine learning',
+    'GPT','multimodal','RAG','fine-tuning','AI safety','open source AI','AI regulation',
+    'computer vision','autonomous vehicles','AI art','AI music','natural language processing',
+  ];
+  const selected = WIZ.data.topics || [];
+  setHTML('#wiz-body', `
+    <p class="text-sm text-muted mb-4">Tap topics to select (you can add custom ones later):</p>
+    <div class="topic-grid">
+      ${allTopics.map((t) => `
+        <button type="button" class="topic-chip${selected.includes(t) ? ' selected' : ''}"
+          onclick="this.classList.toggle('selected')">${esc(t)}</button>`).join('')}
+    </div>
+  `);
+}
+
+function wizCollectTopics() {
+  const selected = $$('.topic-chip.selected', $('#wiz-body')).map((b) => b.textContent.trim());
+  WIZ.data.topics = selected;
+  return API.saveSetupStep('topics', { topics: selected }).then(() => true).catch(() => true);
+}
+
+function wizBodyDrive() {
+  const current = WIZ.data.driveFolderName || 'Newsy Archive';
+  setHTML('#wiz-body', `
+    <div class="form-group">
+      <label class="form-label">Archive folder name</label>
+      <input class="form-control" id="drive-folder-name" type="text" value="${esc(current)}"
+             placeholder="Newsy Archive">
+      <p class="form-hint">This folder will be created in the root of your Google Drive.
+        Newsletters are organized inside by source and date.</p>
+    </div>
+    <div class="alert alert-info" style="margin-top:12px">
+      <span>📁</span>
+      <div>
+        <strong>Folder structure preview:</strong><br>
+        <code style="font-size:12px;line-height:1.8">${'Newsy Archive/ → By Year/ → By Source/ → Daily Newspapers/'}</code>
+      </div>
+    </div>
+  `);
+}
+
+function wizCollectDrive() {
+  const name = ($('#drive-folder-name') || {}).value || 'Newsy Archive';
+  WIZ.data.driveFolderName = name;
+  return API.saveSetupStep('drive', { driveFolderName: name }).then(() => true);
+}
+
+function wizBodyApiKeys() {
+  setHTML('#wiz-body', `
+    <p class="text-sm text-muted mb-4">Add at least one API key. Keys are encrypted on the server — never visible in your browser after saving.</p>
+    ${[
+      { id: 'claude', label: 'Claude (Anthropic)', placeholder: 'sk-ant-...', badge: 'Recommended' },
+      { id: 'openai', label: 'OpenAI',             placeholder: 'sk-proj-...' },
+      { id: 'gemini', label: 'Gemini (Google)',     placeholder: 'AIza...' },
+    ].map((p) => `
+      <div class="form-group">
+        <label class="form-label">
+          ${p.label}
+          ${p.badge ? `<span class="badge badge-accent" style="margin-left:6px">${p.badge}</span>` : ''}
+        </label>
+        <div class="input-password-wrap">
+          <input class="form-control" id="key-${p.id}" type="password" placeholder="${p.placeholder}" autocomplete="off">
+          <button class="input-password-toggle" type="button" onclick="toggleKeyVisibility('${p.id}')">👁</button>
+        </div>
+      </div>`).join('')}
+    <p class="form-hint">You can add or rotate keys anytime in Settings → AI Providers.</p>
+  `);
+}
+
+function toggleKeyVisibility(providerId) {
+  const input = $(`#key-${providerId}`);
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function wizCollectApiKeys() {
+  const providers = ['claude', 'openai', 'gemini'];
+  const keys = {};
+  providers.forEach((p) => {
+    const val = ($(`#key-${p}`) || {}).value || '';
+    if (val.trim()) keys[p] = val.trim();
+  });
+  if (Object.keys(keys).length === 0) {
+    Toast.info('No keys entered — you can add them later in Settings.');
+    WIZ.data.apiKeys = {};
+    return true;
+  }
+  WIZ.data.apiKeys = keys;
+  return true;
+}
+
+function wizBodyBackfill() {
+  const bf = WIZ.data.backfill || {};
+  setHTML('#wiz-body', `
+    <div class="form-group">
+      <label class="form-check">
+        <input type="checkbox" id="bf-enabled" ${bf.enabled ? 'checked' : ''} onchange="toggleBackfillFields(this)">
+        <div>
+          <div class="font-medium">Import historical newsletters</div>
+          <div class="text-sm text-muted">Runs in the background over days/weeks. Safe for 15,000+ messages.</div>
+        </div>
+      </label>
+    </div>
+    <div id="bf-fields" style="${bf.enabled ? '' : 'display:none'}">
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label">Start date</label>
+          <input class="form-control" id="bf-start" type="date" value="${bf.startDate || ''}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">End date (optional)</label>
+          <input class="form-control" id="bf-end" type="date" value="${bf.endDate || ''}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Import mode</label>
+        <select class="form-control" id="bf-mode">
+          <option value="all">All matching messages</option>
+          <option value="newsletters_only">Newsletter signals only</option>
+        </select>
+      </div>
+      <div class="alert alert-info">
+        <span>⏱</span>
+        <div>Backfill runs in 5-minute batches every 5 minutes. Your account won't be affected during normal use.</div>
+      </div>
+    </div>
+  `);
+}
+
+function toggleBackfillFields(checkbox) {
+  $('#bf-fields').style.display = checkbox.checked ? '' : 'none';
+}
+
+function wizCollectBackfill() {
+  const enabled = ($('#bf-enabled') || {}).checked || false;
+  WIZ.data.backfill = {
+    enabled,
+    startDate: enabled ? (($('#bf-start') || {}).value || '') : '',
+    endDate:   enabled ? (($('#bf-end')   || {}).value || '') : '',
+    mode:      enabled ? (($('#bf-mode')  || {}).value || 'all') : 'all',
+    labels:    WIZ.data.labels || [],
+  };
+  return true;
+}
+
+function wizBodyComplete() {
+  setHTML('#wiz-body', `
+    <div style="text-align:center;padding:24px 0 8px">
+      <div style="font-size:56px;margin-bottom:16px">🎉</div>
+      <p style="font-size:15px;color:var(--text-secondary);line-height:1.7">
+        Newsy is setting up your archive, index, and scan triggers.<br>
+        This takes a few seconds.
+      </p>
+      <div id="setup-progress" class="mt-6">
+        <div class="spinner spinner-lg" style="margin:0 auto"></div>
+      </div>
+    </div>
+  `);
+  $('#wiz-next-btn').disabled = true;
+  wizFinish();
+}
+
+async function wizFinish() {
+  try {
+    await API.completeSetup({
+      preferences: {
+        topics:             WIZ.data.topics   || [],
+        newsletterLabels:   WIZ.data.labels   || [],
+        driveFolderName:    WIZ.data.driveFolderName || 'Newsy Archive',
+      },
+      apiKeys: WIZ.data.apiKeys || {},
+      backfill: WIZ.data.backfill || { enabled: false },
+    });
+    setHTML('#setup-progress', '<div class="badge badge-success" style="font-size:14px;padding:8px 20px">✓ Setup complete!</div>');
+    App.setupComplete = true;
+    setTimeout(() => Router.navigate('#dashboard'), 1200);
+  } catch (err) {
+    Toast.error('Setup failed: ' + err.message);
+    if ($('#wiz-next-btn')) $('#wiz-next-btn').disabled = false;
+  }
+}
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.appendChild(document.createTextNode(str || ''));
+  return d.innerHTML;
+}
+</script>
+</div>

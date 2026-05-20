@@ -1,0 +1,257 @@
+<!-- ── Archive View ─────────────────────────────────────────────────────── -->
+<div id="view-archive" class="view">
+
+<style>
+.archive-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+.archive-filters {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--space-5);
+  position: sticky;
+  top: calc(var(--header-height) + 24px);
+}
+.filter-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: var(--space-3);
+}
+@media (max-width: 768px) {
+  .archive-layout { grid-template-columns: 1fr; }
+  .archive-filters { position: static; }
+}
+</style>
+
+<div class="archive-layout">
+  <!-- Filter sidebar -->
+  <div class="archive-filters">
+    <div class="filter-title">Filter</div>
+
+    <div class="form-group">
+      <label class="form-label">Source</label>
+      <select class="form-control" id="filter-source" onchange="archiveApplyFilters()">
+        <option value="">All sources</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-control" id="filter-status" onchange="archiveApplyFilters()">
+        <option value="">All</option>
+        <option value="imported">Imported</option>
+        <option value="pending">Pending</option>
+        <option value="drive_error">Drive error</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">From date</label>
+      <input class="form-control" type="date" id="filter-from" onchange="archiveApplyFilters()">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">To date</label>
+      <input class="form-control" type="date" id="filter-to" onchange="archiveApplyFilters()">
+    </div>
+
+    <button class="btn btn-ghost btn-sm w-full" onclick="archiveClearFilters()">Clear filters</button>
+  </div>
+
+  <!-- Results -->
+  <div>
+    <div class="flex items-center justify-between mb-4">
+      <span id="archive-count" class="text-sm text-muted">Loading…</span>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary btn-sm" onclick="archiveToggleView('list')" id="btn-list">List</button>
+        <button class="btn btn-secondary btn-sm" onclick="archiveToggleView('compact')" id="btn-compact">Compact</button>
+      </div>
+    </div>
+
+    <div id="archive-list">
+      <div class="loading-state"><div class="spinner spinner-lg"></div></div>
+    </div>
+
+    <div id="archive-pagination"></div>
+  </div>
+</div>
+
+<script>
+const Archive = {
+  page:     1,
+  pageSize: 25,
+  viewMode: 'list',
+  filters:  {},
+  sources:  [],
+};
+
+async function initArchive() {
+  if (!App.setupComplete) return;
+  await loadArchiveSources();
+  await loadArchive();
+}
+
+async function loadArchiveSources() {
+  try {
+    Archive.sources = await API.getSources();
+    const sel = $('#filter-source');
+    if (!sel) return;
+    Archive.sources.forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sel.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+async function loadArchive() {
+  showLoading('#archive-list');
+  const filters = buildArchiveFilters();
+  try {
+    const res = await API.getNewsletters(filters);
+    renderArchiveCount(res.total, res.page, res.pageSize);
+    renderArchiveList(res.items || []);
+    renderArchivePagination(res.totalPages, res.page);
+  } catch (err) {
+    setHTML('#archive-list', `<div class="alert alert-error">${err.message}</div>`);
+  }
+}
+
+function buildArchiveFilters() {
+  return {
+    page:     Archive.page,
+    pageSize: Archive.pageSize,
+    source:   ($('#filter-source') || {}).value   || '',
+    status:   ($('#filter-status') || {}).value   || '',
+    fromDate: ($('#filter-from')   || {}).value   || '',
+    toDate:   ($('#filter-to')     || {}).value   || '',
+  };
+}
+
+function archiveApplyFilters() {
+  Archive.page = 1;
+  loadArchive();
+}
+
+function archiveClearFilters() {
+  ['filter-source','filter-status','filter-from','filter-to'].forEach((id) => {
+    const el = $(('#'+id));
+    if (el) el.value = '';
+  });
+  archiveApplyFilters();
+}
+
+function archiveToggleView(mode) {
+  Archive.viewMode = mode;
+  $$('[id^=btn-]').forEach((b) => b.classList.remove('btn-primary'));
+  const btn = $(`#btn-${mode}`);
+  if (btn) btn.classList.add('btn-primary');
+  loadArchive();
+}
+
+function renderArchiveCount(total, page, pageSize) {
+  const start = (page - 1) * pageSize + 1;
+  const end   = Math.min(page * pageSize, total);
+  setHTML('#archive-count', total > 0
+    ? `Showing ${fmtNum(start)}–${fmtNum(end)} of ${fmtNum(total)} newsletters`
+    : 'No newsletters found');
+}
+
+function renderArchiveList(items) {
+  if (!items.length) {
+    showEmpty('#archive-list', 'No newsletters match', 'Try adjusting your filters.', '🔍');
+    return;
+  }
+
+  if (Archive.viewMode === 'compact') {
+    setHTML('#archive-list', `
+      <div style="border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden">
+        ${items.map((n, i) => `
+          <div class="flex items-center gap-3 px-4 py-3 cursor-pointer
+               ${i > 0 ? 'border-top:1px solid var(--border)' : ''}"
+               style="${i > 0 ? 'border-top:1px solid var(--border)' : ''}"
+               onclick="openNewsletter('${escAttr(n.messageId)}','${escAttr(n.driveFileUrl)}')"
+               onmouseenter="this.style.background='var(--surface-2)'"
+               onmouseleave="this.style.background=''">
+            <div class="newsletter-avatar" style="width:32px;height:32px;font-size:13px">${esc(senderInitial(n.sender))}</div>
+            <div style="flex:1;min-width:0">
+              <div class="newsletter-subject">${esc(n.subject)}</div>
+              <div class="newsletter-meta">
+                <span>${esc(n.sourceName)}</span>
+                <span>·</span>
+                <span>${fmtDate(n.date)}</span>
+              </div>
+            </div>
+            ${n.driveFileUrl ? '<span style="color:var(--text-tertiary)">↗</span>' : ''}
+          </div>`).join('')}
+      </div>`);
+  } else {
+    setHTML('#archive-list', `
+      <div class="newsletter-list">
+        ${items.map((n) => `
+          <div class="newsletter-item" onclick="openNewsletter('${escAttr(n.messageId)}','${escAttr(n.driveFileUrl)}')">
+            <div class="newsletter-avatar">${esc(senderInitial(n.sender))}</div>
+            <div class="newsletter-info">
+              <div class="newsletter-source">${esc(n.sourceName || n.senderEmail)}</div>
+              <div class="newsletter-subject">${esc(n.subject)}</div>
+              <div class="newsletter-meta">
+                <span>${fmtDate(n.date)}</span>
+                <span>·</span>
+                <span>${esc(n.senderEmail)}</span>
+                ${n.labels && n.labels.length ? `<span>· ${esc(n.labels.slice(0,2).join(', '))}</span>` : ''}
+                ${statusBadge(n.processingStatus)}
+              </div>
+              ${n.topics && n.topics.length ? `
+                <div class="tags mt-2">
+                  ${n.topics.slice(0,4).map((t) => `<span class="tag" style="pointer-events:none">${esc(t)}</span>`).join('')}
+                </div>` : ''}
+            </div>
+            ${n.driveFileUrl ? '<span style="color:var(--text-tertiary);font-size:18px;flex-shrink:0">↗</span>' : ''}
+          </div>`).join('')}
+      </div>`);
+  }
+}
+
+function renderArchivePagination(totalPages, currentPage) {
+  if (!totalPages || totalPages <= 1) { setHTML('#archive-pagination', ''); return; }
+  const pages = [];
+  const delta = 2;
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+      pages.push(i);
+    } else if (pages[pages.length-1] !== '…') {
+      pages.push('…');
+    }
+  }
+  setHTML('#archive-pagination', `
+    <div class="pagination">
+      <button class="page-btn" ${currentPage <= 1 ? 'disabled' : ''} onclick="archiveGoPage(${currentPage-1})">‹</button>
+      ${pages.map((p) => p === '…'
+        ? '<span style="padding:0 4px;color:var(--text-tertiary)">…</span>'
+        : `<button class="page-btn ${p === currentPage ? 'active' : ''}" onclick="archiveGoPage(${p})">${p}</button>`
+      ).join('')}
+      <button class="page-btn" ${currentPage >= totalPages ? 'disabled' : ''} onclick="archiveGoPage(${currentPage+1})">›</button>
+    </div>`);
+}
+
+function archiveGoPage(page) {
+  Archive.page = page;
+  loadArchive();
+  window.scrollTo(0, 0);
+}
+
+function openNewsletter(messageId, driveUrl) {
+  if (driveUrl) window.open(driveUrl, '_blank');
+}
+
+function esc(s) { const d = document.createElement('div'); d.appendChild(document.createTextNode(s||'')); return d.innerHTML; }
+function escAttr(s) { return (s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+</script>
+</div>

@@ -1,0 +1,240 @@
+<!-- ── Search View ──────────────────────────────────────────────────────── -->
+<div id="view-search" class="view">
+
+<style>
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+  margin-bottom: var(--space-5);
+}
+.search-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.search-filter-group .form-label { margin-bottom: 0; }
+.search-filter-group select,
+.search-filter-group input { min-width: 140px; }
+</style>
+
+<div class="mb-5">
+  <div class="search-wrap" style="max-width:600px">
+    <svg class="search-icon" width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+      <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+    </svg>
+    <input
+      class="search-input"
+      id="search-input"
+      type="search"
+      placeholder="Search newsletters, sources, topics…"
+      autocomplete="off"
+      oninput="searchDebounced()"
+      onkeydown="if(event.key==='Enter') doSearch()">
+  </div>
+</div>
+
+<!-- Filters row -->
+<div class="search-filters">
+  <div class="search-filter-group">
+    <label class="form-label">Source</label>
+    <select class="form-control" id="search-source" onchange="doSearch()">
+      <option value="">All sources</option>
+    </select>
+  </div>
+  <div class="search-filter-group">
+    <label class="form-label">From</label>
+    <input class="form-control" type="date" id="search-from" onchange="doSearch()">
+  </div>
+  <div class="search-filter-group">
+    <label class="form-label">To</label>
+    <input class="form-control" type="date" id="search-to" onchange="doSearch()">
+  </div>
+  <div class="search-filter-group">
+    <label class="form-label">Status</label>
+    <select class="form-control" id="search-status" onchange="doSearch()">
+      <option value="">All</option>
+      <option value="imported">Imported</option>
+      <option value="pending">Pending</option>
+      <option value="drive_error">Drive error</option>
+    </select>
+  </div>
+  <button class="btn btn-ghost btn-sm" onclick="clearSearch()">Clear</button>
+</div>
+
+<!-- Results -->
+<div id="search-results">
+  <div class="empty-state" style="padding:var(--space-10) 0">
+    <div class="empty-icon">🔍</div>
+    <div class="empty-title">Search your newsletter archive</div>
+    <p class="empty-desc">Search by subject, sender, source name, or topic. Use filters to narrow results.</p>
+  </div>
+</div>
+<div id="search-pagination"></div>
+
+<script>
+const Search = {
+  page:      1,
+  pageSize:  25,
+  debounce:  null,
+  lastQuery: null,
+  sources:   [],
+};
+
+async function initSearch() {
+  if (!App.setupComplete) return;
+  if (!Search.sources.length) {
+    try {
+      Search.sources = await API.getSources();
+      const sel = $('#search-source');
+      if (sel) {
+        Search.sources.forEach((s) => {
+          const opt = document.createElement('option');
+          opt.value = s; opt.textContent = s;
+          sel.appendChild(opt);
+        });
+      }
+    } catch (_) {}
+  }
+}
+
+function searchDebounced() {
+  clearTimeout(Search.debounce);
+  Search.debounce = setTimeout(() => doSearch(), 400);
+}
+
+async function doSearch() {
+  const kw = ($('#search-input') || {}).value || '';
+  const filters = {
+    keyword:  kw,
+    source:   ($('#search-source') || {}).value  || '',
+    fromDate: ($('#search-from')   || {}).value  || '',
+    toDate:   ($('#search-to')     || {}).value  || '',
+    status:   ($('#search-status') || {}).value  || '',
+    page:     Search.page,
+    pageSize: Search.pageSize,
+  };
+
+  if (!kw && !filters.source && !filters.fromDate && !filters.toDate && !filters.status) {
+    setHTML('#search-results', `
+      <div class="empty-state" style="padding:var(--space-10) 0">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">Enter a search term or apply filters</div>
+      </div>`);
+    setHTML('#search-pagination', '');
+    return;
+  }
+
+  showLoading('#search-results', 'Searching…');
+
+  try {
+    const res = await API.getNewsletters(filters);
+    renderSearchResults(res);
+  } catch (err) {
+    setHTML('#search-results', `<div class="alert alert-error">${err.message}</div>`);
+  }
+}
+
+function renderSearchResults(res) {
+  const items = res.items || [];
+  const kw    = ($('#search-input') || {}).value || '';
+
+  if (!items.length) {
+    showEmpty('#search-results', 'No results found', 'Try different keywords or broaden your filters.', '🔍');
+    setHTML('#search-pagination', '');
+    return;
+  }
+
+  const countMsg = `${fmtNum(res.total)} result${res.total !== 1 ? 's' : ''} · Page ${res.page} of ${res.totalPages}`;
+
+  setHTML('#search-results', `
+    <div class="text-sm text-muted mb-4">${countMsg}</div>
+    <div class="newsletter-list">
+      ${items.map((n) => {
+        const subj = kw ? highlightKw(esc(n.subject), kw) : esc(n.subject);
+        const src  = kw ? highlightKw(esc(n.sourceName || n.senderEmail), kw) : esc(n.sourceName || n.senderEmail);
+        return `
+          <div class="newsletter-item" onclick="openSearchResult('${escAttr(n.driveFileUrl)}')">
+            <div class="newsletter-avatar">${esc(senderInitial(n.sender))}</div>
+            <div class="newsletter-info">
+              <div class="newsletter-source">${src}</div>
+              <div class="newsletter-subject">${subj}</div>
+              <div class="newsletter-meta">
+                <span>${fmtDate(n.date)}</span>
+                <span>·</span>
+                <span>${esc(n.senderEmail)}</span>
+                ${statusBadge(n.processingStatus)}
+              </div>
+              ${n.topics && n.topics.length ? `
+                <div class="tags mt-2">
+                  ${n.topics.slice(0,5).map((t) => `
+                    <button class="tag" onclick="event.stopPropagation();searchByTopic('${escAttr(t)}')">${esc(t)}</button>`).join('')}
+                </div>` : ''}
+            </div>
+            ${n.driveFileUrl ? '<span style="color:var(--text-tertiary);font-size:18px;flex-shrink:0">↗</span>' : ''}
+          </div>`;
+      }).join('')}
+    </div>`);
+
+  renderSearchPagination(res.totalPages, res.page);
+}
+
+function highlightKw(html, kw) {
+  if (!kw) return html;
+  const re = new RegExp('(' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+  return html.replace(re, '<mark style="background:var(--warning-light);color:inherit;border-radius:2px">$1</mark>');
+}
+
+function searchByTopic(topic) {
+  const input = $('#search-input');
+  if (input) input.value = topic;
+  Search.page = 1;
+  doSearch();
+}
+
+function openSearchResult(driveUrl) {
+  if (driveUrl) window.open(driveUrl, '_blank');
+}
+
+function clearSearch() {
+  ['search-input','search-source','search-from','search-to','search-status'].forEach((id) => {
+    const el = $(`#${id}`);
+    if (el) el.value = '';
+  });
+  setHTML('#search-results', `
+    <div class="empty-state" style="padding:var(--space-10) 0">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">Search your newsletter archive</div>
+    </div>`);
+  setHTML('#search-pagination', '');
+}
+
+function renderSearchPagination(totalPages, currentPage) {
+  if (!totalPages || totalPages <= 1) { setHTML('#search-pagination', ''); return; }
+  const pages = [];
+  for (let i = 1; i <= totalPages; i++) {
+    if (i===1||i===totalPages||(i>=currentPage-2&&i<=currentPage+2)) pages.push(i);
+    else if (pages[pages.length-1]!=='…') pages.push('…');
+  }
+  setHTML('#search-pagination', `
+    <div class="pagination">
+      <button class="page-btn" ${currentPage<=1?'disabled':''} onclick="searchGoPage(${currentPage-1})">‹</button>
+      ${pages.map((p)=>p==='…'
+        ?'<span style="padding:0 4px;color:var(--text-tertiary)">…</span>'
+        :`<button class="page-btn ${p===currentPage?'active':''}" onclick="searchGoPage(${p})">${p}</button>`
+      ).join('')}
+      <button class="page-btn" ${currentPage>=totalPages?'disabled':''} onclick="searchGoPage(${currentPage+1})">›</button>
+    </div>`);
+}
+
+function searchGoPage(page) {
+  Search.page = page;
+  doSearch();
+  window.scrollTo(0, 0);
+}
+
+function esc(s) { const d = document.createElement('div'); d.appendChild(document.createTextNode(s||'')); return d.innerHTML; }
+function escAttr(s) { return (s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+</script>
+</div>

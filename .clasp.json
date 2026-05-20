@@ -1,0 +1,28 @@
+{
+  "scriptId": "REPLACE_WITH_YOUR_SCRIPT_ID",
+  "rootDir": ".",
+  "filePushOrder": [
+    "appsscript.json",
+    "config.gs",
+    "services/CacheManager.gs",
+    "services/SecretService.gs",
+    "services/SetupService.gs",
+    "services/TriggerService.gs",
+    "services/GmailService.gs",
+    "services/DriveArchiveService.gs",
+    "services/IndexService.gs",
+    "services/BackfillService.gs",
+    "services/ScanService.gs",
+    "services/ProviderService.gs",
+    "router.gs",
+    "Code.gs",
+    "ui/index.html",
+    "ui/onboarding.html",
+    "ui/dashboard.html",
+    "ui/archive.html",
+    "ui/search.html",
+    "ui/settings.html",
+    "ui/_styles.html",
+    "ui/_js.html"
+  ]
+}

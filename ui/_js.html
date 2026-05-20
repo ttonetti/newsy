@@ -1,0 +1,278 @@
+<script>
+// ── Newsy Client-Side Core ───────────────────────────────────────────────────
+// Router, API layer, toast notifications, shared utilities.
+
+// ── State ─────────────────────────────────────────────────────────────────
+
+const App = {
+  currentView:    null,
+  setupComplete:  false,
+  userEmail:      '',
+  dashboardData:  null,
+};
+
+// ── Router ─────────────────────────────────────────────────────────────────
+
+const Router = {
+  routes: {},
+
+  register(hash, initFn) {
+    this.routes[hash] = initFn;
+  },
+
+  navigate(hash) {
+    if (!hash || hash === '#') hash = App.setupComplete ? '#dashboard' : '#onboarding';
+    history.pushState(null, '', hash);
+    this._activate(hash);
+  },
+
+  _activate(hash) {
+    const route = hash.replace('#', '');
+    document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
+
+    const view = document.getElementById('view-' + route);
+    if (view) view.classList.add('active');
+
+    const navItem = document.querySelector(`.nav-item[data-route="${hash}"]`);
+    if (navItem) navItem.classList.add('active');
+
+    // Update page title
+    const titleMap = {
+      dashboard: 'Dashboard', archive: 'Archive', search: 'Search',
+      settings: 'Settings', onboarding: 'Setup',
+    };
+    const titleEl = document.querySelector('.page-title');
+    if (titleEl) titleEl.textContent = titleMap[route] || 'Newsy';
+
+    // Run init function for the view
+    if (this.routes[route]) {
+      try { this.routes[route](); } catch (e) { console.error('Route init error:', e); }
+    }
+    App.currentView = route;
+  },
+
+  init() {
+    window.addEventListener('popstate', () => this._activate(location.hash || '#dashboard'));
+    const initialHash = location.hash || (App.setupComplete ? '#dashboard' : '#onboarding');
+    this._activate(initialHash);
+  },
+};
+
+// ── API Layer ──────────────────────────────────────────────────────────────
+// Promisified wrappers around google.script.run
+
+const API = {
+  call(fnName, ...args) {
+    return new Promise((resolve, reject) => {
+      const runner = google.script.run
+        .withSuccessHandler((res) => {
+          if (res && res.success === false) reject(new Error(res.error || 'Server error'));
+          else resolve(res && res.data !== undefined ? res.data : res);
+        })
+        .withFailureHandler((err) => reject(err));
+      runner[fnName](...args);
+    });
+  },
+
+  getInitialState:       ()     => API.call('getInitialState'),
+  getSetupStatus:        ()     => API.call('getSetupStatus'),
+  getGmailLabels:        ()     => API.call('getGmailLabels'),
+  saveSetupStep:         (s,d)  => API.call('saveSetupStep', s, JSON.stringify(d)),
+  completeSetup:         (d)    => API.call('completeSetup', JSON.stringify(d)),
+  resetSetup:            ()     => API.call('resetSetup'),
+  getDashboardData:      ()     => API.call('getDashboardData'),
+  getNewsletters:        (f)    => API.call('getNewsletters', JSON.stringify(f || {})),
+  getNewsletterById:     (id)   => API.call('getNewsletterById', id),
+  getSources:            ()     => API.call('getSources'),
+  startBackfill:         (cfg)  => API.call('startBackfill', JSON.stringify(cfg)),
+  getBackfillState:      ()     => API.call('getBackfillState'),
+  pauseBackfill:         ()     => API.call('pauseBackfill'),
+  resumeBackfill:        ()     => API.call('resumeBackfill'),
+  estimateBackfill:      (cfg)  => API.call('estimateBackfill', JSON.stringify(cfg)),
+  saveApiKey:            (p,k)  => API.call('saveApiKey', p, k),
+  removeApiKey:          (p)    => API.call('removeApiKey', p),
+  getProviderStatuses:   ()     => API.call('getProviderStatuses'),
+  testProviderConnection:(p)    => API.call('testProviderConnection', p),
+  getUserPrefs:          ()     => API.call('getUserPrefs'),
+  saveUserPrefs:         (p)    => API.call('saveUserPrefs', JSON.stringify(p)),
+  setupScanTrigger:      ()     => API.call('setupScanTrigger'),
+  removeScanTrigger:     ()     => API.call('removeScanTrigger'),
+  runScanNow:            ()     => API.call('runScanNow'),
+};
+
+// ── Toast Notifications ────────────────────────────────────────────────────
+
+const Toast = {
+  container: null,
+
+  init() {
+    this.container = document.getElementById('toast-container');
+    if (!this.container) {
+      this.container = document.createElement('div');
+      this.container.id = 'toast-container';
+      document.body.appendChild(this.container);
+    }
+  },
+
+  show(message, type, durationMs) {
+    const el = document.createElement('div');
+    el.className = 'toast' + (type ? ' ' + type : '');
+    el.textContent = message;
+    this.container.appendChild(el);
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 200ms';
+      setTimeout(() => el.remove(), 220);
+    }, durationMs || 3000);
+  },
+
+  success: (msg) => Toast.show(msg, 'success'),
+  error:   (msg) => Toast.show(msg, 'error', 4000),
+  info:    (msg) => Toast.show(msg),
+};
+
+// ── DOM Utilities ──────────────────────────────────────────────────────────
+
+function $(sel, ctx) { return (ctx || document).querySelector(sel); }
+function $$(sel, ctx) { return Array.from((ctx || document).querySelectorAll(sel)); }
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => {
+    if (k === 'class') node.className = v;
+    else if (k === 'html') node.innerHTML = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  });
+  children.forEach((c) => {
+    if (c == null) return;
+    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return node;
+}
+
+function setHTML(selector, html, ctx) {
+  const node = $(selector, ctx);
+  if (node) node.innerHTML = html;
+}
+
+function showLoading(selector, msg, ctx) {
+  setHTML(selector, `
+    <div class="loading-state">
+      <div class="spinner spinner-lg"></div>
+      <span class="text-muted">${msg || 'Loading…'}</span>
+    </div>
+  `, ctx);
+}
+
+function showEmpty(selector, title, desc, icon, ctx) {
+  setHTML(selector, `
+    <div class="empty-state">
+      <div class="empty-icon">${icon || '📭'}</div>
+      <div class="empty-title">${title}</div>
+      <p class="empty-desc">${desc || ''}</p>
+    </div>
+  `, ctx);
+}
+
+// ── Formatting Helpers ─────────────────────────────────────────────────────
+
+function fmtDate(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  if (isNaN(d)) return isoStr;
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffH   = Math.floor(diffMs / 3600000);
+  const diffD   = Math.floor(diffMs / 86400000);
+  if (diffMin < 60)  return diffMin <= 1 ? 'just now' : `${diffMin}m ago`;
+  if (diffH   < 24)  return `${diffH}h ago`;
+  if (diffD   < 7)   return `${diffD}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: diffD > 365 ? 'numeric' : undefined });
+}
+
+function fmtNum(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString();
+}
+
+function fmtPct(processed, total) {
+  if (!total) return 0;
+  return Math.min(100, Math.round((processed / total) * 100));
+}
+
+function senderInitial(sender) {
+  const name = sender || '?';
+  const clean = name.replace(/<[^>]+>/, '').trim();
+  return (clean[0] || '?').toUpperCase();
+}
+
+function statusBadge(status) {
+  const map = {
+    configured: ['success', 'Configured'],
+    missing:    ['warning', 'Missing'],
+    'needs-update': ['warning', 'Needs update'],
+    running:    ['accent',   'Running'],
+    paused:     ['neutral',  'Paused'],
+    complete:   ['success',  'Complete'],
+    error:      ['error',    'Error'],
+    idle:       ['neutral',  'Idle'],
+    imported:   ['accent',   'Imported'],
+    pending:    ['neutral',  'Pending'],
+    drive_error:['warning',  'Drive error'],
+  };
+  const [type, label] = map[status] || ['neutral', status || '—'];
+  return `<span class="badge badge-${type}">${label}</span>`;
+}
+
+// ── Backfill Status Poller ─────────────────────────────────────────────────
+
+const BackfillPoller = {
+  intervalId: null,
+  onUpdate: null,
+
+  start(onUpdate) {
+    this.onUpdate = onUpdate;
+    if (this.intervalId) return;
+    this.intervalId = setInterval(() => this._tick(), 10000);
+    this._tick();
+  },
+
+  stop() {
+    if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
+  },
+
+  async _tick() {
+    try {
+      const state = await API.getBackfillState();
+      if (this.onUpdate) this.onUpdate(state);
+      if (state && (state.status === 'complete' || state.status === 'error')) this.stop();
+    } catch (_) {}
+  },
+};
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', async () => {
+  Toast.init();
+
+  // Nav click handlers
+  document.querySelectorAll('.nav-item[data-route]').forEach((btn) => {
+    btn.addEventListener('click', () => Router.navigate(btn.dataset.route));
+  });
+
+  // Set app state from server-injected values
+  App.setupComplete = window.__NEWSY_SETUP_COMPLETE__ === true;
+  App.userEmail     = window.__NEWSY_USER_EMAIL__ || '';
+
+  // Update user avatar
+  const avatarEl = document.querySelector('.sidebar-user-avatar');
+  const emailEl  = document.querySelector('.sidebar-user-email');
+  if (avatarEl) avatarEl.textContent = (App.userEmail[0] || 'N').toUpperCase();
+  if (emailEl)  emailEl.textContent  = App.userEmail || 'User';
+
+  Router.init();
+});
+</script>
