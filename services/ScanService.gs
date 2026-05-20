@@ -55,28 +55,32 @@ const ScanService = (() => {
   function _buildQuery(prefs, lastScan) {
     const parts = [];
 
-    // Include configured newsletter labels
+    // has:unsubscribe is Gmail's native operator — catches virtually all newsletters
+    // regardless of labels, headers, or subject patterns.
+    const labelParts = [];
+
     const labels = prefs.newsletterLabels || [];
     if (labels.length > 0) {
-      const labelPart = labels.map((l) => `label:${l}`).join(' OR ');
-      parts.push('(' + labelPart + ')');
+      labels.forEach((l) => labelParts.push(`label:${l}`));
     }
 
-    // Fallback: look for newsletters in inbox and broad signals
-    if (labels.length === 0) {
-      parts.push('(unsubscribe OR "view in browser" OR "manage subscription")');
+    // Always include unlabeled newsletter signals too, per user request
+    if (prefs.scanUnlabeled !== false) {
+      labelParts.push('has:unsubscribe');
     }
 
-    // Only look at messages since last scan
+    if (labelParts.length > 0) {
+      parts.push('(' + labelParts.join(' OR ') + ')');
+    }
+
+    // Only look at messages since last scan (with 5-min overlap to avoid gaps)
     if (lastScan) {
       const d = new Date(lastScan);
-      // Subtract a small overlap to avoid missing messages at boundary
       d.setMinutes(d.getMinutes() - 5);
-      const formatted = Utilities.formatDate(d, 'UTC', 'yyyy/MM/dd');
-      parts.push(`after:${formatted}`);
+      parts.push(`after:${Utilities.formatDate(d, 'UTC', 'yyyy/MM/dd')}`);
     }
 
-    return parts.join(' ');
+    return parts.join(' ') || 'has:unsubscribe';
   }
 
   function _processMessage(message) {

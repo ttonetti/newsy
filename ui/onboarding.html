@@ -217,25 +217,82 @@ function wizBodyWelcome() {
   `);
 }
 
+// Patterns that suggest a label contains newsletters
+const NEWSLETTER_LABEL_HINTS = [
+  /newsletter/i, /news/i, /digest/i, /weekly/i, /daily/i,
+  /substack/i, /beehiiv/i, /mailchimp/i, /convertkit/i,
+  /bulletin/i, /briefing/i, /roundup/i, /ai/i, /tech/i,
+  /startup/i, /reads/i, /updates/i, /feeds/i,
+];
+
+function _looksLikeNewsletterLabel(name) {
+  return NEWSLETTER_LABEL_HINTS.some((re) => re.test(name));
+}
+
 function wizBodyLabels() {
   setHTML('#wiz-body', '<div class="loading-state"><div class="spinner"></div></div>');
   API.getGmailLabels().then((labels) => {
     WIZ.labels = labels || [];
-    const selected = WIZ.data.labels || [];
+    const prevSelected = WIZ.data.labels || [];
+
+    // Auto-suggest labels that look like newsletter containers
+    const suggested = WIZ.labels.filter((l) => _looksLikeNewsletterLabel(l.name));
+    const rest      = WIZ.labels.filter((l) => !_looksLikeNewsletterLabel(l.name));
+
+    // Pre-select suggested ones if user hasn't made a choice yet
+    const selected = prevSelected.length > 0
+      ? prevSelected
+      : suggested.map((l) => l.name);
+
+    const renderChip = (l) => `
+      <label class="label-chip${selected.includes(l.name) ? ' selected' : ''}">
+        <input type="checkbox" value="${esc(l.name)}" ${selected.includes(l.name) ? 'checked' : ''}
+          onchange="toggleLabelChip(this)">
+        <span>🏷 ${esc(l.name)}</span>
+      </label>`;
+
     setHTML('#wiz-body', `
-      <p class="text-sm text-muted mb-4">Select labels that contain newsletters:</p>
-      <div class="label-grid" id="label-grid">
-        ${WIZ.labels.map((l) => `
-          <label class="label-chip${selected.includes(l.name) ? ' selected' : ''}">
-            <input type="checkbox" value="${esc(l.name)}" ${selected.includes(l.name) ? 'checked' : ''}
-              onchange="toggleLabelChip(this)">
-            <span>🏷 ${esc(l.name)}</span>
-          </label>`).join('')}
-        ${WIZ.labels.length === 0 ? '<p class="text-muted text-sm">No labels found. You can add them in Settings later.</p>' : ''}
+      <!-- Always-on: scan mail without labels too -->
+      <div class="alert alert-info mb-4">
+        <span>✅</span>
+        <div>
+          <strong>Newsy siempre escaneará correos sin clasificar</strong> usando el operador
+          <code>has:unsubscribe</code> de Gmail — independientemente de las etiquetas que elijas aquí.
+        </div>
       </div>
-      <p class="form-hint mt-4">Can't find the right label? You can skip for now and configure in Settings.</p>
+
+      <p class="text-sm text-muted mb-3">
+        Selecciona además las etiquetas donde ya tienes newsletters organizadas.
+        ${suggested.length > 0 ? '<strong>Hemos preseleccionado las que parecen newsletters:</strong>' : ''}
+      </p>
+
+      ${suggested.length > 0 ? `
+        <p class="text-xs text-muted mb-2" style="text-transform:uppercase;letter-spacing:.06em;font-weight:600">Sugeridas</p>
+        <div class="label-grid mb-4">${suggested.map(renderChip).join('')}</div>
+      ` : ''}
+
+      ${rest.length > 0 ? `
+        <details style="margin-bottom:12px">
+          <summary class="text-sm text-muted" style="cursor:pointer">
+            ${rest.length} etiquetas más (sin clasificar como newsletters)
+          </summary>
+          <div class="label-grid mt-3">${rest.map(renderChip).join('')}</div>
+        </details>
+      ` : ''}
+
+      ${WIZ.labels.length === 0 ? `
+        <div class="alert alert-warning">
+          <span>⚠️</span>
+          <div>No tienes etiquetas en Gmail. Newsy usará <code>has:unsubscribe</code> para encontrar newsletters.</div>
+        </div>` : ''}
+
+      <p class="form-hint">Puedes cambiar esto en cualquier momento en Configuración → Etiquetas.</p>
     `);
-  }).catch(() => setHTML('#wiz-body', '<p class="text-muted text-sm">Could not load labels. Check Gmail permissions.</p>'));
+  }).catch(() => setHTML('#wiz-body', `
+    <div class="alert alert-warning">
+      <span>⚠️</span>
+      <div>No se pudieron cargar las etiquetas. Newsy usará <code>has:unsubscribe</code> igualmente.</div>
+    </div>`));
 }
 
 function toggleLabelChip(input) {

@@ -43,41 +43,54 @@ const GmailService = (() => {
     const signals = [];
     let score = 0;
 
-    const rawHeaders = _getRawHeaders(message);
-    const headerKeys = rawHeaders.map((h) => h.name.toLowerCase());
-
-    // Check positive headers
-    CONFIG.DETECTION.HEADERS_POSITIVE.forEach((h) => {
-      if (headerKeys.includes(h)) {
-        signals.push('header:' + h);
-        score += 2;
-      }
-    });
-
-    // Check Precedence header
-    const precedence = _getHeader(rawHeaders, 'precedence');
-    if (precedence && CONFIG.DETECTION.PRECEDENCE_BULK.some((v) => precedence.toLowerCase().includes(v))) {
-      signals.push('precedence:bulk');
-      score += 1;
+    // ── Headers (most reliable signals) ─────────────────────────────────────
+    // GmailMessage.getHeader(name) is the correct GAS method
+    const listUnsub = message.getHeader('List-Unsubscribe');
+    if (listUnsub) {
+      signals.push('header:list-unsubscribe');
+      score += 3; // strongest signal — almost exclusively newsletters
     }
 
-    // Check subject patterns
+    const listId = message.getHeader('List-ID') || message.getHeader('List-Id');
+    if (listId) {
+      signals.push('header:list-id');
+      score += 3;
+    }
+
+    const listPost = message.getHeader('List-Post');
+    if (listPost) { signals.push('header:list-post'); score += 1; }
+
+    const precedence = message.getHeader('Precedence');
+    if (precedence && CONFIG.DETECTION.PRECEDENCE_BULK.some((v) => precedence.toLowerCase().includes(v))) {
+      signals.push('precedence:bulk');
+      score += 2;
+    }
+
+    // ── Subject patterns ─────────────────────────────────────────────────────
     const subject = message.getSubject() || '';
     CONFIG.DETECTION.SUBJECT_PATTERNS.forEach((re) => {
-      if (re.test(subject)) {
-        signals.push('subject:' + re.source);
-        score += 1;
-      }
+      if (re.test(subject)) { signals.push('subject:' + re.source); score += 1; }
     });
 
-    // Check sender patterns
+    // ── Sender patterns ──────────────────────────────────────────────────────
     const from = message.getFrom() || '';
     CONFIG.DETECTION.SENDER_PATTERNS.forEach((re) => {
-      if (re.test(from)) {
-        signals.push('sender:' + re.source);
-        score += 1;
-      }
+      if (re.test(from)) { signals.push('sender:' + re.source); score += 1; }
     });
+
+    // ── Body signals (unsubscribe link in body) ───────────────────────────────
+    // Only check body if score is still 0, to avoid quota waste
+    if (score === 0) {
+      try {
+        const plain = message.getPlainBody() || '';
+        const bodyLower = plain.slice(0, 3000).toLowerCase(); // only check start
+        if (bodyLower.includes('unsubscribe') || bodyLower.includes('manage preferences') ||
+            bodyLower.includes('view in browser') || bodyLower.includes('view online')) {
+          signals.push('body:unsubscribe-link');
+          score += 2;
+        }
+      } catch (_) {}
+    }
 
     return {
       isNewsletter: score >= CONFIG.DETECTION.MIN_SCORE_THRESHOLD,
@@ -143,22 +156,6 @@ const GmailService = (() => {
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────────
-
-  function _getRawHeaders(message) {
-    // GmailMessage doesn't directly expose all headers in GAS;
-    // we can access common ones via getHeader() workaround using raw message.
-    try {
-      // This works when the message object comes from a thread search
-      return message.getHeader ? [] : []; // placeholder; GAS doesn't expose all headers
-    } catch (_) {
-      return [];
-    }
-  }
-
-  function _getHeader(headers, name) {
-    const found = headers.find((h) => h.name.toLowerCase() === name.toLowerCase());
-    return found ? found.value : null;
-  }
 
   // Parse email address from "Display Name <email@domain.com>"
   function _parseEmail(from) {

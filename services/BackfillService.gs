@@ -118,20 +118,23 @@ const BackfillService = (() => {
   function _buildQuery(config) {
     const parts = [];
 
+    // Build the source filter: configured labels + unlabeled newsletters
+    const sourceParts = [];
     if (config.labels && config.labels.length > 0) {
-      const labelParts = config.labels.map((l) => `label:${l}`).join(' OR ');
-      parts.push('(' + labelParts + ')');
+      config.labels.forEach((l) => sourceParts.push(`label:${l}`));
+    }
+    // Always include has:unsubscribe to catch newsletters without labels
+    if (config.includeUnlabeled !== false) {
+      sourceParts.push('has:unsubscribe');
+    }
+    if (sourceParts.length > 0) {
+      parts.push('(' + sourceParts.join(' OR ') + ')');
     }
 
     if (config.startDate) parts.push(`after:${_dateToGmailFilter(new Date(config.startDate))}`);
     if (config.endDate)   parts.push(`before:${_dateToGmailFilter(new Date(config.endDate))}`);
 
-    // Basic newsletter signal
-    if (config.mode === 'newsletters_only') {
-      parts.push('(unsubscribe OR newsletter OR digest)');
-    }
-
-    return parts.length > 0 ? parts.join(' ') : 'in:all';
+    return parts.length > 0 ? parts.join(' ') : 'has:unsubscribe';
   }
 
   function _dateToGmailFilter(date) {
