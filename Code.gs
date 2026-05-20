@@ -5,7 +5,7 @@
 
 function doGet(e) {
   try {
-    const template = HtmlService.createTemplateFromFile('ui/index');
+    const template = HtmlService.createTemplateFromFile('index');
     template.setupComplete = SetupService.isSetupComplete();
     template.appVersion    = CONFIG.VERSION;
     template.appName       = CONFIG.APP_NAME;

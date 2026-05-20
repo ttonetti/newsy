@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Newsy</title>
-<?!= include('ui/_styles') ?>
+<?!= include('_styles') ?>
 </head>
 <body>
 
@@ -76,17 +76,17 @@ window.__NEWSY_USER_EMAIL__     = "<?= Session.getActiveUser().getEmail() ?>";
 
     <main class="page-body" id="page-body">
       <!-- Views are injected below -->
-      <?!= include('ui/onboarding') ?>
-      <?!= include('ui/dashboard') ?>
-      <?!= include('ui/archive') ?>
-      <?!= include('ui/search') ?>
-      <?!= include('ui/settings') ?>
+      <?!= include('onboarding') ?>
+      <?!= include('dashboard') ?>
+      <?!= include('archive') ?>
+      <?!= include('search') ?>
+      <?!= include('settings') ?>
     </main>
 
   </div><!-- /main-content -->
 </div><!-- /app-shell -->
 
-<?!= include('ui/_js') ?>
+<?!= include('_js') ?>
 
 <script>
 // ── View Registrations ─────────────────────────────────────────────────────
